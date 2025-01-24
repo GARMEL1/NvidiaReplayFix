@@ -111,7 +111,7 @@ void SimulateKeyCombination() {
     SendInput(6, inputs, sizeof(INPUT));
     keyCombinationSent = true; // Устанавливаем флаг отправленного сочетания клавиш
     std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Ждём 5 секунд перед сбросом флага
-    keyCombinationSent = false; // Сбрасываем флаг после истечения времени
+    keyCombinationSent = false; // Сбрасываем флаг после истечения времениd
 }
 
 void DisplayAsciiArtFromCode(int delay = 100) {
