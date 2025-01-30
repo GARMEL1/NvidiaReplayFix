@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+// Глобальная переменная для хранения времени последней отправки
+std::chrono::steady_clock::time_point lastSentTime;
+const std::chrono::seconds cooldownPeriod(20); // Кулдаун 20 секунд
+
 HANDLE FindSecondLargestNvContainerProcessHandle() {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
@@ -72,11 +76,11 @@ bool IsNvContainerBelowThreshold(HANDLE processHandle, DWORD threshold) {
     return false;
 }
 
-bool keyCombinationSent = false;
-
 void SimulateKeyCombination() {
-    if (keyCombinationSent) {
-        return; // Проверка на отправление комбинации клавиш
+    auto now = std::chrono::steady_clock::now();
+    if (now - lastSentTime < cooldownPeriod) {
+        std::cout << "Cooldown active. Skipping key combination.\n";
+        return; // Кулдаун активен, ничего не делаем
     }
 
     INPUT inputs[6] = {};
@@ -109,9 +113,8 @@ void SimulateKeyCombination() {
     inputs[5].ki.dwFlags = KEYEVENTF_KEYUP;
 
     SendInput(6, inputs, sizeof(INPUT));
-    keyCombinationSent = true; // Устанавливаем флаг отправленного сочетания клавиш
-    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Ждём 5 секунд перед сбросом флага
-    keyCombinationSent = false; // Сбрасываем флаг после истечения времени
+    lastSentTime = now; // Обновляем время последней отправки
+    std::cout << "Key combination sent. Cooldown activated.\n";
 }
 
 void DisplayAsciiArtFromCode(int delay = 100) {
@@ -125,7 +128,6 @@ void DisplayAsciiArtFromCode(int delay = 100) {
 +===============================================================================================================+
 )";
 
-    // Вывод ASCII картинки
     const char* line = art;
     while (*line) {
         if (*line == '\n') {
@@ -139,11 +141,8 @@ void DisplayAsciiArtFromCode(int delay = 100) {
     }
 }
 
-
 int main() {
-
-    int animationSpeed = 50; // Ускорение анимации: значение 50 мс между кадрами
-    DisplayAsciiArtFromCode(animationSpeed); // Запуск анимации с ускорением
+    DisplayAsciiArtFromCode(50);
 
     while (true) {
         HANDLE processHandle = FindSecondLargestNvContainerProcessHandle();
@@ -159,7 +158,7 @@ int main() {
         }
 
         CloseHandle(processHandle);
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        std::this_thread::sleep_for(std::chrono::seconds(1)); // Проверка каждую секунду
     }
 
     return 0;
