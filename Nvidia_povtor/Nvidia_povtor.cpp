@@ -6,12 +6,10 @@
 #include <chrono>
 #include <string>
 #include <vector>
-#include <atomic>
-#include <algorithm>
 
-// Глобальные переменные для управления временем отправки
+// Глобальная переменная для хранения времени последней отправки
 std::chrono::steady_clock::time_point lastSentTime;
-const std::chrono::seconds cooldownPeriod(60); // Кулдаун 60 секунд
+const std::chrono::seconds cooldownPeriod(20); // Кулдаун 20 секунд
 
 HANDLE FindSecondLargestNvContainerProcessHandle() {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -27,7 +25,9 @@ HANDLE FindSecondLargestNvContainerProcessHandle() {
         return nullptr;
     }
 
-    std::vector<std::pair<DWORD, HANDLE>> processes;
+    DWORD firstMaxMemory = 0, secondMaxMemory = 0;
+    HANDLE secondLargestHandle = nullptr;
+    HANDLE firstLargestHandle = nullptr;
 
     do {
         if (std::wstring(entry.szExeFile) == L"nvcontainer.exe") {
@@ -35,7 +35,22 @@ HANDLE FindSecondLargestNvContainerProcessHandle() {
             if (process) {
                 PROCESS_MEMORY_COUNTERS pmc = {};
                 if (GetProcessMemoryInfo(process, &pmc, sizeof(pmc))) {
-                    processes.emplace_back(pmc.WorkingSetSize, process);
+                    DWORD workingSetSize = pmc.WorkingSetSize;
+
+                    if (workingSetSize > firstMaxMemory) {
+                        secondMaxMemory = firstMaxMemory;
+                        secondLargestHandle = firstLargestHandle;
+
+                        firstMaxMemory = workingSetSize;
+                        firstLargestHandle = process;
+                    }
+                    else if (workingSetSize > secondMaxMemory) {
+                        secondMaxMemory = workingSetSize;
+                        secondLargestHandle = process;
+                    }
+                    else {
+                        CloseHandle(process);
+                    }
                 }
                 else {
                     CloseHandle(process);
@@ -46,22 +61,11 @@ HANDLE FindSecondLargestNvContainerProcessHandle() {
 
     CloseHandle(snapshot);
 
-    if (processes.size() < 2) {
-        for (auto& p : processes) CloseHandle(p.second);
-        return nullptr;
+    if (firstLargestHandle != nullptr && firstLargestHandle != secondLargestHandle) {
+        CloseHandle(firstLargestHandle);
     }
 
-    // Сортировка процессов по убыванию используемой памяти
-    std::sort(processes.begin(), processes.end(), [](auto& a, auto& b) {
-        return a.first > b.first;
-        });
-
-    // Закрываем все дескрипторы, кроме второго по величине
-    for (size_t i = 0; i < processes.size(); ++i) {
-        if (i != 1) CloseHandle(processes[i].second);
-    }
-
-    return processes.size() >= 2 ? processes[1].second : nullptr;
+    return secondLargestHandle;
 }
 
 bool IsNvContainerBelowThreshold(HANDLE processHandle, DWORD threshold) {
@@ -75,28 +79,35 @@ bool IsNvContainerBelowThreshold(HANDLE processHandle, DWORD threshold) {
 void SimulateKeyCombination() {
     auto now = std::chrono::steady_clock::now();
     if (now - lastSentTime < cooldownPeriod) {
-        return;
+        std::cout << "Cooldown active. Skipping key combination.\n";
+        return; // Кулдаун активен, ничего не делаем
     }
 
     INPUT inputs[6] = {};
 
+    // Нажатие Alt
     inputs[0].type = INPUT_KEYBOARD;
     inputs[0].ki.wVk = VK_MENU;
 
+    // Нажатие Shift
     inputs[1].type = INPUT_KEYBOARD;
     inputs[1].ki.wVk = VK_SHIFT;
 
+    // Нажатие F10
     inputs[2].type = INPUT_KEYBOARD;
     inputs[2].ki.wVk = VK_F10;
 
+    // Отпускание F10
     inputs[3].type = INPUT_KEYBOARD;
     inputs[3].ki.wVk = VK_F10;
     inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
 
+    // Отпускание Shift
     inputs[4].type = INPUT_KEYBOARD;
     inputs[4].ki.wVk = VK_SHIFT;
     inputs[4].ki.dwFlags = KEYEVENTF_KEYUP;
 
+    // Отпускание Alt
     inputs[5].type = INPUT_KEYBOARD;
     inputs[5].ki.wVk = VK_MENU;
     inputs[5].ki.dwFlags = KEYEVENTF_KEYUP;
@@ -132,28 +143,22 @@ void DisplayAsciiArtFromCode(int delay = 100) {
 
 int main() {
     DisplayAsciiArtFromCode(50);
-    const DWORD threshold = 50000 * 1024; // Порог 50 МБ
-    bool wasBelowThreshold = false; // Для гистерезиса
 
     while (true) {
         HANDLE processHandle = FindSecondLargestNvContainerProcessHandle();
-        if (!processHandle) {
-            std::cerr << "Process not found. Retrying in 30 seconds...\n";
-            std::this_thread::sleep_for(std::chrono::seconds(30));
+        if (processHandle == nullptr) {
+            std::cerr << "No valid nvcontainer.exe process found." << std::endl;
+            std::this_thread::sleep_for(std::chrono::seconds(3));
             continue;
         }
 
-        bool isBelow = IsNvContainerBelowThreshold(processHandle, threshold);
-
-        // Гистерезис: отправляем команду только если состояние изменилось с высокого на низкое
-        if (isBelow && !wasBelowThreshold) {
-            std::cout << "Memory below threshold. Attempting to enable Instant Replay...\n";
+        if (IsNvContainerBelowThreshold(processHandle, 50000 * 1024)) {
+            std::cout << "Attempting to enable Instant Replay..." << std::endl;
             SimulateKeyCombination();
         }
-        wasBelowThreshold = isBelow;
 
         CloseHandle(processHandle);
-        std::this_thread::sleep_for(std::chrono::seconds(10)); // Проверка каждые 10 секунд
+        std::this_thread::sleep_for(std::chrono::seconds(1)); // Проверка каждую секунду
     }
 
     return 0;
